@@ -25,7 +25,6 @@ def make_tokens(sentence):
     tokens = filter(lambda x: x not in non_word_chars, tokens)  # remove characters which are not words in their own right
     tokens = list(tokens)  # perform the previous operations on demand
     pos_tags = pos_tag(tokens)  # tag the tokens
-    assert len(pos_tags) == len(tokens), "length of pos tags mismatch"  # todo: remove this
     pos_tags = map(lambda pos_tag: tag_dict.get(pos_tag[1][0].upper(), wordnet.NOUN), pos_tags)  # convert pos tags to a format which the lemmatizer can use
     tokens = map(lambda token, pos_tag: lemmatizer.lemmatize(token, pos_tag), tokens, pos_tags)  # lemmatize the word with its pos tag
     tokens = list(tokens)  # perform the previous operations on demand

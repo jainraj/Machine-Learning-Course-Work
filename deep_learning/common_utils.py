@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from torch.nn import CrossEntropyLoss
 from time import time
 from math import fabs
+from tqdm import tqdm
 from sklearn.model_selection import StratifiedKFold
 import numpy
 import random
@@ -55,7 +56,7 @@ def train_epoch_batch(model, data, optimiser):
     """For one batch in one training epoch"""
     premise, premise_length, hypothesis, hypothesis_length, label_target = data
     label_pred = model(premise, premise_length, hypothesis, hypothesis_length)
-    loss = CrossEntropyLoss()(label_target, label_pred)
+    loss = CrossEntropyLoss()(label_pred, label_target)
     loss.backward()  # compute updates for each parameter
     optimiser.step()  # make the updates for each parameter
     optimiser.zero_grad()  # cleanup step
@@ -69,7 +70,7 @@ def test_epoch_batch(model, data):
     """For one batch in one testing epoch"""
     premise, premise_length, hypothesis, hypothesis_length, label_target = data
     label_pred = model(premise, premise_length, hypothesis, hypothesis_length)
-    loss = CrossEntropyLoss()(label_target, label_pred)
+    loss = CrossEntropyLoss()(label_pred, label_target)
     _, label_argmax = torch.max(label_pred.data, 1)
     correct = (label_argmax == label_target).sum().item()
     n = label_target.shape[0]
@@ -132,7 +133,7 @@ def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, o
         test_loss.append(epoch_test_loss), test_acc.append(epoch_test_accuracy)
 
         print(f'[{epoch + 1:03d}] Training Loss:{epoch_train_loss:7.3f} Acc:{epoch_train_accuracy:7.3f}'
-              f'- Validation Loss:{epoch_test_loss:7.3f} Acc:{epoch_test_accuracy:7.3f}'
+              f' - Validation Loss:{epoch_test_loss:7.3f} Acc:{epoch_test_accuracy:7.3f}'
               f'   |   Epoch Time Lapsed:{time() - start:7.3f} sec')
 
         if fabs(prev_epoch_test_loss - epoch_test_loss) < threshold:
@@ -166,21 +167,24 @@ def process_sent_type(sent_type, train_df, test_df, embedding_type, embedding_di
     4. Create embedding layer based on embedding_type param but keep zeros for 0-index and some random vector for 1-index (our special indices)
     5. The padding_idx will be kept to 0 as that indicates padding
     """
+    train_df, test_df = train_df.copy(), test_df.copy()
     # Convert tokens to numbers
     all_tokens = set(w for l in train_df[f'{sent_type}_tokens'] for w in l)
     vocab = {w: i + 2 for i, w in enumerate(all_tokens)}
-    train_df[sent_type] = train_df[f'{sent_type}_tokens'].apply(lambda l: [vocab[w] for w in l])
-    test_df[sent_type] = test_df[f'{sent_type}_tokens'].apply(lambda l: [vocab.get(w, 1) for w in l])  # 1 for unknown token
+    tqdm.pandas(desc='Indexing tokens')
+    train_df[sent_type] = train_df[f'{sent_type}_tokens'].progress_apply(lambda l: [vocab[w] for w in l])
+    test_df[sent_type] = test_df[f'{sent_type}_tokens'].progress_apply(lambda l: [vocab.get(w, 1) for w in l])  # 1 for unknown token
 
     # Get max length and pad with 0's
-    train_df[f'{sent_type}_length'] = train_df[sent_type].apply(len)
-    test_df[f'{sent_type}_length'] = test_df[sent_type].apply(len)
+    tqdm.pandas(desc='Get lengths')
+    train_df[f'{sent_type}_length'] = train_df[sent_type].progress_apply(len)
+    test_df[f'{sent_type}_length'] = test_df[sent_type].progress_apply(len)
 
+    tqdm.pandas(desc='Padding')
     max_train_length = train_df[f'{sent_type}_length'].max()
-    train_df[sent_type] = train_df[[sent_type, f'{sent_type}_length']].apply(lambda row: row[sent_type] + [0] * (max_train_length - row[f'{sent_type}_length']), axis=1)
-
+    train_df[sent_type] = train_df[[sent_type, f'{sent_type}_length']].progress_apply(lambda row: row[sent_type] + [0] * (max_train_length - row[f'{sent_type}_length']), axis=1)
     max_test_length = test_df[f'{sent_type}_length'].max()
-    test_df[sent_type] = test_df[[sent_type, f'{sent_type}_length']].apply(lambda row: row[sent_type] + [0] * (max_test_length - row[f'{sent_type}_length']), axis=1)
+    test_df[sent_type] = test_df[[sent_type, f'{sent_type}_length']].progress_apply(lambda row: row[sent_type] + [0] * (max_test_length - row[f'{sent_type}_length']), axis=1)
 
     # Create embedding layer
     num_embeddings = len(all_tokens) + 2
@@ -197,6 +201,7 @@ def process_sent_type(sent_type, train_df, test_df, embedding_type, embedding_di
             else:
                 embeddings_matrix[word_idx] = numpy.random.uniform(-0.05, 0.05, size=(300,))  # tokens not present get a random vector
 
+        embeddings_matrix = torch.tensor(embeddings_matrix)
         embedding = Embedding(num_embeddings, 300, padding_idx=0)
         embedding.load_state_dict({'weight': embeddings_matrix})
         embedding.weight.requires_grad = embedding_type == 1
@@ -218,10 +223,11 @@ def train_and_test(data_df, device, seed, num_epochs, bs, model_class,
     train_acc_curves, test_acc_curves = {}, {}
 
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-    for idx, (train_index, test_index) in enumerate(skf.split(data_df, data_df.gold_label)):
+    for idx, (train_index, test_index) in enumerate(skf.split(data_df, data_df.label)):
+        print(f"Starting CV fold {idx + 1}")
         train_df, test_df = data_df.iloc[train_index], data_df.iloc[test_index]
 
-        reset_seeds(seed + idx)  # for reproducibility
+        reset_seeds(seed + idx)  # for reproducibility todo: check
         train_df, test_df, premise_embedding, premise_vocab = process_sent_type('premise', train_df, test_df, embedding_type, embedding_dim)
         train_df, test_df, hypothesis_embedding, hypothesis_vocab = process_sent_type('hypothesis', train_df, test_df, embedding_type, embedding_dim)
 
