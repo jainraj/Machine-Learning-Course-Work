@@ -7,7 +7,9 @@ from nltk import pos_tag
 from nltk.corpus import wordnet
 from nltk.stem import WordNetLemmatizer
 
-base_path = '/home/raj/Desktop/CourseWork/E0-270/Project/SNLI/'
+__all__ = ['get_preprocessed_data']
+
+base_path = '/home/raj/Desktop/CourseWork/E0-270/Project/Machine-Learning-Course-Work/'
 non_word_chars = set(string.ascii_lowercase) - {'a', 'i'}
 tag_dict = {"J": wordnet.ADJ, "N": wordnet.NOUN, "V": wordnet.VERB, "R": wordnet.ADV}
 lemmatizer = WordNetLemmatizer()
@@ -56,6 +58,7 @@ def get_preprocessed_data():
         processed_test_data = preprocess_data(test_data)
         processed_train_data.to_pickle(data_path + 'train_data.pkl')
         processed_test_data.to_pickle(data_path + 'test_data.pkl')
+    print(f'Num Train Samples: {len(processed_train_data)}, Num Test Samples: {len(processed_test_data)}')
     return processed_train_data, processed_test_data
 
 

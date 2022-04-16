@@ -8,16 +8,15 @@ class SNLI_LSTM(Module):
 
     def __init__(self,
                  premise_embedding, hypothesis_embedding,
-                 premise_hidden_size, premise_layers,
-                 hypothesis_hidden_size, hypothesis_layers,
+                 hidden_size, layers,
                  feed_forward_model: Sequential):
         super(SNLI_LSTM, self).__init__()
 
         self.premise_embedding = premise_embedding
         self.hypothesis_embedding = hypothesis_embedding
 
-        self.premise_LSTM = LSTM(input_size=premise_embedding.embedding_dim, hidden_size=premise_hidden_size, num_layers=premise_layers, batch_first=True, bidirectional=True)
-        self.hypothesis_LSTM = LSTM(input_size=hypothesis_embedding.embedding_dim, hidden_size=hypothesis_hidden_size, num_layers=hypothesis_layers, batch_first=True, bidirectional=True)
+        self.premise_LSTM = LSTM(input_size=premise_embedding.embedding_dim, hidden_size=hidden_size, num_layers=layers, batch_first=True, bidirectional=True)
+        self.hypothesis_LSTM = LSTM(input_size=hypothesis_embedding.embedding_dim, hidden_size=hidden_size, num_layers=layers, batch_first=True, bidirectional=True)
 
         self.feed_forward_model = feed_forward_model  # a Sequential model
 
@@ -42,13 +41,13 @@ class SNLI_LSTM(Module):
             if 'bias' in name:
                 init.zeros_(param)
         with torch.no_grad():
-            self.premise_LSTM.bias_hh_l0.data = torch.tensor([0] * premise_hidden_size + [1] * premise_hidden_size + [0] * premise_hidden_size * 2).float()
-            self.hypothesis_LSTM.bias_hh_l0.data = torch.tensor([0] * hypothesis_hidden_size + [1] * hypothesis_hidden_size + [0] * hypothesis_hidden_size * 2).float()
+            self.premise_LSTM.bias_hh_l0.data = torch.tensor([0] * hidden_size + [1] * hidden_size + [0] * hidden_size * 2).float()
+            self.hypothesis_LSTM.bias_hh_l0.data = torch.tensor([0] * hidden_size + [1] * hidden_size + [0] * hidden_size * 2).float()
 
         self.double()
 
     def __get_lstm_output(self, lstm, lstm_inp, lengths):  # lstm_inp is of shape (batch_size, seq_length, embedding_size)
-        packed_input = pack_padded_sequence(lstm_inp, lengths, batch_first=True, enforce_sorted=False)
+        packed_input = pack_padded_sequence(lstm_inp, lengths.cpu(), batch_first=True, enforce_sorted=False)
         packed_output, _ = lstm(packed_input)  # output is of shape (batch_size, seq_length, all_hidden_states)
         output, _ = pad_packed_sequence(packed_output, batch_first=True)
         return output[:, -1, :]  # (batch_size, all_hidden_states) of the last item in the sequence

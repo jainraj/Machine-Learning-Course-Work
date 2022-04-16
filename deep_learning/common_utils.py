@@ -1,15 +1,15 @@
 import torch
 from torch.nn import Embedding, init
-from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 from torch.nn import CrossEntropyLoss
 from time import time
 from math import fabs
-from tqdm import tqdm
 from sklearn.model_selection import StratifiedKFold
 import numpy
 import random
 import gensim.downloader
+
+__all__ = ['get_device', 'train_and_test']
 
 
 def reset_seeds(s):
@@ -136,11 +136,11 @@ def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, o
               f' - Validation Loss:{epoch_test_loss:7.3f} Acc:{epoch_test_accuracy:7.3f}'
               f'   |   Epoch Time Lapsed:{time() - start:7.3f} sec')
 
-        if fabs(prev_epoch_test_loss - epoch_test_loss) < threshold:
-            print("Validation loss hasn't improved, stopping!")
-            break
-        else:
-            prev_epoch_test_loss = epoch_test_loss
+        # if fabs(prev_epoch_test_loss - epoch_test_loss) < threshold:
+        #     print("Validation loss hasn't improved, stopping!")
+        #     break
+        # else:
+        #     prev_epoch_test_loss = epoch_test_loss
 
     return train_loss, train_acc, test_loss, test_acc
 
@@ -171,20 +171,17 @@ def process_sent_type(sent_type, train_df, test_df, embedding_type, embedding_di
     # Convert tokens to numbers
     all_tokens = set(w for l in train_df[f'{sent_type}_tokens'] for w in l)
     vocab = {w: i + 2 for i, w in enumerate(all_tokens)}
-    tqdm.pandas(desc='Indexing tokens')
-    train_df[sent_type] = train_df[f'{sent_type}_tokens'].progress_apply(lambda l: [vocab[w] for w in l])
-    test_df[sent_type] = test_df[f'{sent_type}_tokens'].progress_apply(lambda l: [vocab.get(w, 1) for w in l])  # 1 for unknown token
+    train_df[sent_type] = train_df[f'{sent_type}_tokens'].apply(lambda l: [vocab[w] for w in l])
+    test_df[sent_type] = test_df[f'{sent_type}_tokens'].apply(lambda l: [vocab.get(w, 1) for w in l])  # 1 for unknown token
 
     # Get max length and pad with 0's
-    tqdm.pandas(desc='Get lengths')
-    train_df[f'{sent_type}_length'] = train_df[sent_type].progress_apply(len)
-    test_df[f'{sent_type}_length'] = test_df[sent_type].progress_apply(len)
+    train_df[f'{sent_type}_length'] = train_df[sent_type].apply(len)
+    test_df[f'{sent_type}_length'] = test_df[sent_type].apply(len)
 
-    tqdm.pandas(desc='Padding')
     max_train_length = train_df[f'{sent_type}_length'].max()
-    train_df[sent_type] = train_df[[sent_type, f'{sent_type}_length']].progress_apply(lambda row: row[sent_type] + [0] * (max_train_length - row[f'{sent_type}_length']), axis=1)
+    train_df[sent_type] = train_df[[sent_type, f'{sent_type}_length']].apply(lambda row: row[sent_type] + [0] * (max_train_length - row[f'{sent_type}_length']), axis=1)
     max_test_length = test_df[f'{sent_type}_length'].max()
-    test_df[sent_type] = test_df[[sent_type, f'{sent_type}_length']].progress_apply(lambda row: row[sent_type] + [0] * (max_test_length - row[f'{sent_type}_length']), axis=1)
+    test_df[sent_type] = test_df[[sent_type, f'{sent_type}_length']].apply(lambda row: row[sent_type] + [0] * (max_test_length - row[f'{sent_type}_length']), axis=1)
 
     # Create embedding layer
     num_embeddings = len(all_tokens) + 2
@@ -214,8 +211,7 @@ def process_sent_type(sent_type, train_df, test_df, embedding_type, embedding_di
 
 def train_and_test(data_df, device, seed, num_epochs, bs, model_class,
                    embedding_type, embedding_dim,
-                   premise_hidden_size, premise_layers,
-                   hypothesis_hidden_size, hypothesis_layers,
+                   hidden_size, layers,
                    feed_forward_model,
                    optimiser_class, optimiser_kwargs):
     """Get loss and accuracy curves for a given set of hyper-parameters using a cross-validation technique"""
@@ -227,14 +223,11 @@ def train_and_test(data_df, device, seed, num_epochs, bs, model_class,
         print(f"Starting CV fold {idx + 1}")
         train_df, test_df = data_df.iloc[train_index], data_df.iloc[test_index]
 
-        reset_seeds(seed + idx)  # for reproducibility todo: check
+        reset_seeds(seed)  # for fair comparison - all models will start from the same initial point
         train_df, test_df, premise_embedding, premise_vocab = process_sent_type('premise', train_df, test_df, embedding_type, embedding_dim)
         train_df, test_df, hypothesis_embedding, hypothesis_vocab = process_sent_type('hypothesis', train_df, test_df, embedding_type, embedding_dim)
-
-        reset_seeds(seed)  # for fair comparison - all models will start from the same initial point
         model = model_class(premise_embedding, hypothesis_embedding,
-                            premise_hidden_size, premise_layers,
-                            hypothesis_hidden_size, hypothesis_layers,
+                            hidden_size, layers,
                             feed_forward_model)
         to_device(model, device)
 
