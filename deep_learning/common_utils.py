@@ -147,7 +147,7 @@ def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, o
 def get_dataloader(section_df, bs):
     """Get DataLoader object for a dataframe"""
     section_dataset = TensorDataset(*get_tensors(section_df))
-    return DataLoader(section_dataset, batch_size=bs, shuffle=True, num_workers=4, pin_memory=True)
+    return DataLoader(section_dataset, batch_size=bs, shuffle=True)
 
 
 def get_dataloaders(train_df, test_df, bs):
