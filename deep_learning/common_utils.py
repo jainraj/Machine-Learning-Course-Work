@@ -61,9 +61,9 @@ def train_epoch_batch(model, data, optimiser):
     optimiser.step()  # make the updates for each parameter
     optimiser.zero_grad()  # cleanup step
     _, label_argmax = torch.max(label_pred.data, 1)
-    correct = (label_argmax == label_target).sum().item()
+    correct = (label_argmax == label_target).sum()
     n = label_target.shape[0]
-    return loss.item() * n, n, correct
+    return loss.detach().item() * n, n, correct.detach().item()
 
 
 def test_epoch_batch(model, data):
@@ -72,9 +72,9 @@ def test_epoch_batch(model, data):
     label_pred = model(premise, premise_length, hypothesis, hypothesis_length)
     loss = CrossEntropyLoss()(label_pred, label_target)
     _, label_argmax = torch.max(label_pred.data, 1)
-    correct = (label_argmax == label_target).sum().item()
+    correct = (label_argmax == label_target).sum()
     n = label_target.shape[0]
-    return loss.item() * n, n, correct
+    return loss.detach().item() * n, n, correct.detach().item()
 
 
 def get_tensors(section_df):
@@ -115,8 +115,7 @@ def test_epoch(model, test_dataloader):
     return epoch_test_loss, epoch_test_accuracy
 
 
-def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, optimiser_class, optimiser_kwargs,
-                         threshold=0.0001):
+def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, optimiser_class, optimiser_kwargs):
     """Train and test model for all epochs"""
     train_loss, test_loss = [], []
     train_acc, test_acc = [], []
@@ -136,11 +135,11 @@ def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, o
               f' - Validation Loss:{epoch_test_loss:9.5f} Acc:{epoch_test_accuracy:9.5f}'
               f'   |   Epoch Time Lapsed:{time() - start:7.3f} sec')
 
-        if fabs(prev_epoch_test_loss - epoch_test_loss) < threshold:
-            print("Validation loss hasn't improved, stopping!")
-            break
-        else:
-            prev_epoch_test_loss = epoch_test_loss
+        # if fabs(prev_epoch_test_loss - epoch_test_loss) < threshold:
+        #     print("Validation loss hasn't improved, stopping!")
+        #     break
+        # else:
+        #     prev_epoch_test_loss = epoch_test_loss
 
     return train_loss, train_acc, test_loss, test_acc
 
@@ -148,7 +147,7 @@ def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, o
 def get_dataloader(section_df, bs):
     """Get DataLoader object for a dataframe"""
     section_dataset = TensorDataset(*get_tensors(section_df))
-    return DataLoader(section_dataset, batch_size=bs, shuffle=True)
+    return DataLoader(section_dataset, batch_size=bs, shuffle=True, num_workers=4, pin_memory=True)
 
 
 def get_dataloaders(train_df, test_df, bs):

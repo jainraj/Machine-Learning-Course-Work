@@ -45,7 +45,7 @@ class SNLI_LSTM(Module):
             if 'bias' in name:
                 init.zeros_(param)
 
-        self.double()
+        self.half()  # use float16
 
     def __get_lstm_output(self, lstm, lstm_inp, lengths):  # lstm_inp is of shape (batch_size, seq_length, embedding_size)
         packed_input = pack_padded_sequence(lstm_inp, lengths.cpu(), batch_first=True, enforce_sorted=False)
