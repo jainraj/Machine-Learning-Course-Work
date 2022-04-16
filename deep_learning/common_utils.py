@@ -221,7 +221,7 @@ def train_and_test(data_df, device, seed, num_epochs, bs, model_class,
     train_loss_curves, test_loss_curves = {}, {}
     train_acc_curves, test_acc_curves = {}, {}
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+    skf = StratifiedKFold(n_splits=4, shuffle=True, random_state=seed)
     for idx, (train_index, test_index) in enumerate(skf.split(data_df, data_df.label)):
         print(f"Starting CV fold {idx + 1}")
         train_df, test_df = data_df.iloc[train_index], data_df.iloc[test_index]
