@@ -26,31 +26,32 @@ class SNLI_LSTM(Module):
                 init.xavier_uniform_(param)
             elif 'weight_hh' in name:
                 init.orthogonal_(param)
-            elif 'bias_ih_l0' == name:
+            elif 'bias_ih' in name:
                 init.zeros_(param)
+            elif 'bias_hh' in name:
+                param.data = torch.tensor([0] * hidden_size + [1] * hidden_size + [0] * hidden_size * 2, dtype=torch.float)
         for name, param in self.hypothesis_LSTM.named_parameters():
             if 'weight_ih' in name:
                 init.xavier_uniform_(param)
             elif 'weight_hh' in name:
                 init.orthogonal_(param)
-            elif 'bias_ih_l0' == name:  # todo: check all these as we have multiple layers
+            elif 'bias_ih' in name:
                 init.zeros_(param)
+            elif 'bias_hh' in name:
+                param.data = torch.tensor([0] * hidden_size + [1] * hidden_size + [0] * hidden_size * 2, dtype=torch.float)
         for name, param in self.feed_forward_model.named_parameters():
             if 'weight' in name:
                 init.xavier_uniform_(param)
             if 'bias' in name:
                 init.zeros_(param)
-        with torch.no_grad():
-            self.premise_LSTM.bias_hh_l0.data = torch.tensor([0] * hidden_size + [1] * hidden_size + [0] * hidden_size * 2).float()
-            self.hypothesis_LSTM.bias_hh_l0.data = torch.tensor([0] * hidden_size + [1] * hidden_size + [0] * hidden_size * 2).float()
 
         self.double()
 
     def __get_lstm_output(self, lstm, lstm_inp, lengths):  # lstm_inp is of shape (batch_size, seq_length, embedding_size)
         packed_input = pack_padded_sequence(lstm_inp, lengths.cpu(), batch_first=True, enforce_sorted=False)
-        packed_output, _ = lstm(packed_input)  # output is of shape (batch_size, seq_length, all_hidden_states)
-        output, _ = pad_packed_sequence(packed_output, batch_first=True)
-        return output[:, -1, :]  # (batch_size, all_hidden_states) of the last item in the sequence
+        _, (h, _) = lstm(packed_input)  # h is of shape (D*num_layers, batch_size, hidden_size)
+        batch_size = h.shape[1]
+        return h.transpose(0, 1).reshape(batch_size, -1)  # (batch_size, all_hidden_states) of the last item in the sequence
 
     def forward(self, premise, premise_length, hypothesis, hypothesis_length):
         concatenate_list = [

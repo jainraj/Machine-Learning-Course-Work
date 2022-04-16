@@ -1,3 +1,4 @@
+import pickle
 import re
 import os
 import pandas
@@ -56,8 +57,8 @@ def get_preprocessed_data():
                                     usecols=['sentence1_binary_parse', 'sentence2_binary_parse', 'gold_label'])
         processed_train_data = preprocess_data(train_data)
         processed_test_data = preprocess_data(test_data)
-        processed_train_data.to_pickle(data_path + 'train_data.pkl')
-        processed_test_data.to_pickle(data_path + 'test_data.pkl')
+        processed_train_data.to_pickle(data_path + 'train_data.pkl', protocol=pickle.DEFAULT_PROTOCOL)
+        processed_test_data.to_pickle(data_path + 'test_data.pkl', protocol=pickle.DEFAULT_PROTOCOL)
     print(f'Num Train Samples: {len(processed_train_data)}, Num Test Samples: {len(processed_test_data)}')
     return processed_train_data, processed_test_data
 

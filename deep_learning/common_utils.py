@@ -132,15 +132,15 @@ def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, o
         epoch_test_loss, epoch_test_accuracy = test_epoch(model, test_dataloader)
         test_loss.append(epoch_test_loss), test_acc.append(epoch_test_accuracy)
 
-        print(f'[{epoch + 1:03d}] Training Loss:{epoch_train_loss:7.3f} Acc:{epoch_train_accuracy:7.3f}'
-              f' - Validation Loss:{epoch_test_loss:7.3f} Acc:{epoch_test_accuracy:7.3f}'
+        print(f'[{epoch + 1:03d}] Training Loss:{epoch_train_loss:9.5f} Acc:{epoch_train_accuracy:9.5f}'
+              f' - Validation Loss:{epoch_test_loss:9.5f} Acc:{epoch_test_accuracy:9.5f}'
               f'   |   Epoch Time Lapsed:{time() - start:7.3f} sec')
 
-        # if fabs(prev_epoch_test_loss - epoch_test_loss) < threshold:
-        #     print("Validation loss hasn't improved, stopping!")
-        #     break
-        # else:
-        #     prev_epoch_test_loss = epoch_test_loss
+        if fabs(prev_epoch_test_loss - epoch_test_loss) < threshold:
+            print("Validation loss hasn't improved, stopping!")
+            break
+        else:
+            prev_epoch_test_loss = epoch_test_loss
 
     return train_loss, train_acc, test_loss, test_acc
 
@@ -198,13 +198,16 @@ def process_sent_type(sent_type, train_df, test_df, embedding_type, embedding_di
             else:
                 embeddings_matrix[word_idx] = numpy.random.uniform(-0.05, 0.05, size=(300,))  # tokens not present get a random vector
 
-        embeddings_matrix = torch.tensor(embeddings_matrix)
         embedding = Embedding(num_embeddings, 300, padding_idx=0)
-        embedding.load_state_dict({'weight': embeddings_matrix})
+        embedding.load_state_dict({'weight': torch.tensor(embeddings_matrix)})
         embedding.weight.requires_grad = embedding_type == 1
     else:  # 'untrained'
         embedding = Embedding(num_embeddings, embedding_dim, padding_idx=0)
         init.uniform_(embedding.weight, -0.05, 0.05)
+        embeddings_matrix = embedding.weight.detach().numpy()
+        embeddings_matrix[0] = numpy.zeros(shape=(embedding_dim,))
+        embedding.load_state_dict({'weight': torch.tensor(embeddings_matrix)})
+        embedding.weight.requires_grad = True
 
     return train_df, test_df, embedding, vocab
 
