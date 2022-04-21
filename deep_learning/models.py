@@ -188,8 +188,8 @@ class SNLI_GRU_Interaction(Module):
         self.hypothesis_embedding = hypothesis_embedding
 
         self.premise_GRU = GRU(input_size=premise_embedding.embedding_dim, hidden_size=hidden_size, num_layers=layers, batch_first=True, bidirectional=True)
-        output_size_from_premise_LSTM = hidden_size * layers * 2  # bidirectional
-        self.hypothesis_GRU = GRU(input_size=hypothesis_embedding.embedding_dim + output_size_from_premise_LSTM, hidden_size=hidden_size, num_layers=layers, batch_first=True, bidirectional=True)
+        output_size_from_premise_GRU = hidden_size * layers * 2  # bidirectional
+        self.hypothesis_GRU = GRU(input_size=hypothesis_embedding.embedding_dim + output_size_from_premise_GRU, hidden_size=hidden_size, num_layers=layers, batch_first=True, bidirectional=True)
 
         self.feed_forward_model = feed_forward_model  # a Sequential model
 

@@ -1,24 +1,19 @@
-import pickle
 import re
 import os
 import pandas
+import pickle
 import string
 from tqdm import tqdm
 from nltk import pos_tag
 from nltk.corpus import wordnet
 from nltk.stem import WordNetLemmatizer
+from constants import label_map, input_path, save_dir
 
-__all__ = ['get_preprocessed_data']
+__all__ = ['get_preprocessed_data', 'clean_up']
 
-base_path = '/home/raj/Desktop/CourseWork/E0-270/Project/Machine-Learning-Course-Work/'
 non_word_chars = set(string.ascii_lowercase) - {'a', 'i'}
 tag_dict = {"J": wordnet.ADJ, "N": wordnet.NOUN, "V": wordnet.VERB, "R": wordnet.ADV}
 lemmatizer = WordNetLemmatizer()
-label_map = {
-    'neutral': 0,
-    'entailment': 1,
-    'contradiction': 2,
-}
 
 
 def make_tokens(sentence):
@@ -31,34 +26,47 @@ def make_tokens(sentence):
     pos_tags = map(lambda pos_tag: tag_dict.get(pos_tag[1][0].upper(), wordnet.NOUN), pos_tags)  # convert pos tags to a format which the lemmatizer can use
     tokens = map(lambda token, pos_tag: lemmatizer.lemmatize(token, pos_tag), tokens, pos_tags)  # lemmatize the word with its pos tag
     tokens = list(tokens)  # perform the previous operations on demand
-    return tokens if tokens else None  # if the sentence ends up giving no useful tokens, remove it from data
+    return tokens
 
 
-def preprocess_data(df):
+def clean_up(df):
+    """
+     remove any data points which
+        1. does not have a gold label
+        2. if no valid tokens were found
+    """
+    df['premise_tokens'] = df.premise_tokens.apply(lambda token_list: token_list if token_list else None)
+    df['hypothesis_tokens'] = df.hypothesis_tokens.apply(lambda token_list: token_list if token_list else None)
+    df.dropna(inplace=True)
+    return df
+
+
+def preprocess_data(df, remove_invalid_rows=True):
+    """Process data"""
     df = df.copy()  # do not change the data in global sense
     df['label'] = df.gold_label.apply(label_map.get)
-    df.dropna(inplace=True)  # remove any datapoints which has missing data in the columns which are required for us & those which does not have a gold label
     tqdm.pandas(desc='Making tokens')
+    df.fillna({'sentence1_binary_parse': '', 'sentence2_binary_parse': ''}, inplace=True)
     df['premise_tokens'] = df.sentence1_binary_parse.progress_apply(make_tokens)
     df['hypothesis_tokens'] = df.sentence2_binary_parse.progress_apply(make_tokens)
-    df.dropna(inplace=True)  # remove the sentences if no valid tokens were found
+    if remove_invalid_rows:
+        df = clean_up(df)
     return df[['premise_tokens', 'hypothesis_tokens', 'label']]
 
 
 def get_preprocessed_data():
-    data_path = base_path + 'data/'
-    if os.path.isfile(data_path + 'train_data.pkl') and os.path.isfile(data_path + 'test_data.pkl'):
-        processed_train_data = pandas.read_pickle(data_path + 'train_data.pkl')
-        processed_test_data = pandas.read_pickle(data_path + 'test_data.pkl')
+    if os.path.isfile(save_dir + 'train_data.pkl') and os.path.isfile(save_dir + 'test_data.pkl'):
+        processed_train_data = pandas.read_pickle(save_dir + 'train_data.pkl')
+        processed_test_data = pandas.read_pickle(save_dir + 'test_data.pkl')
     else:
-        train_data = pandas.read_csv(data_path + 'snli_1.0_train.csv',
+        train_data = pandas.read_csv(input_path + 'snli_1.0_train.csv',
                                      usecols=['sentence1_binary_parse', 'sentence2_binary_parse', 'gold_label'])
-        test_data = pandas.read_csv(data_path + 'snli_1.0_test.csv',
+        test_data = pandas.read_csv(input_path + 'snli_1.0_test.csv',
                                     usecols=['sentence1_binary_parse', 'sentence2_binary_parse', 'gold_label'])
         processed_train_data = preprocess_data(train_data)
-        processed_test_data = preprocess_data(test_data)
-        processed_train_data.to_pickle(data_path + 'train_data.pkl', protocol=pickle.DEFAULT_PROTOCOL)
-        processed_test_data.to_pickle(data_path + 'test_data.pkl', protocol=pickle.DEFAULT_PROTOCOL)
+        processed_test_data = preprocess_data(test_data, remove_invalid_rows=False)
+        processed_train_data.to_pickle(save_dir + 'train_data.pkl', protocol=pickle.DEFAULT_PROTOCOL)
+        processed_test_data.to_pickle(save_dir + 'test_data.pkl', protocol=pickle.DEFAULT_PROTOCOL)
     print(f'Num Train Samples: {len(processed_train_data)}, Num Test Samples: {len(processed_test_data)}')
     return processed_train_data, processed_test_data
 

@@ -1,15 +1,18 @@
-import torch
-from torch.nn import Embedding, init
-from torch.utils.data import DataLoader, TensorDataset
-from torch.nn import CrossEntropyLoss
-from time import time
-from math import fabs
-from sklearn.model_selection import StratifiedKFold
 import numpy
+import torch
 import random
-import gensim.downloader
+import pickle
+import pandas
+from time import time
+from torch.nn import Embedding, init
+from torch.nn import CrossEntropyLoss
+from gensim.models import KeyedVectors
+from sklearn.model_selection import StratifiedKFold
+from torch.utils.data import DataLoader, TensorDataset
+from data_prep import clean_up
+from constants import word2vec_path, save_dir, label_inverse_map, input_path
 
-__all__ = ['get_device', 'train_and_test']
+__all__ = ['get_device', 'train_and_validate', 'train_and_predict']
 
 
 def reset_seeds(s):
@@ -21,7 +24,8 @@ def reset_seeds(s):
 
 
 def get_device():
-    if torch.cuda.is_available():  # Check if we are GPU or CPU and use appropriate code
+    """Check if we are GPU or CPU and use appropriate code"""
+    if torch.cuda.is_available():
         device = torch.device("cuda")
         print("We are on GPU :)")
     else:
@@ -121,8 +125,6 @@ def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, o
     train_acc, test_acc = [], []
     optimiser = optimiser_class(model.parameters(), **optimiser_kwargs)
 
-    prev_epoch_test_loss = numpy.inf
-
     for epoch in range(num_epochs):
         start = time()
         epoch_train_loss, epoch_train_accuracy = train_epoch(model, train_dataloader, optimiser)
@@ -135,19 +137,13 @@ def train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, o
               f' - Validation Loss:{epoch_test_loss:9.5f} Acc:{epoch_test_accuracy:9.5f}'
               f'   |   Epoch Time Lapsed:{time() - start:7.3f} sec')
 
-        # if fabs(prev_epoch_test_loss - epoch_test_loss) < threshold:
-        #     print("Validation loss hasn't improved, stopping!")
-        #     break
-        # else:
-        #     prev_epoch_test_loss = epoch_test_loss
-
     return train_loss, train_acc, test_loss, test_acc
 
 
-def get_dataloader(section_df, bs):
+def get_dataloader(section_df, bs, shuffle=True):
     """Get DataLoader object for a dataframe"""
     section_dataset = TensorDataset(*get_tensors(section_df))
-    return DataLoader(section_dataset, batch_size=bs, shuffle=True)
+    return DataLoader(section_dataset, batch_size=bs, shuffle=shuffle)
 
 
 def get_dataloaders(train_df, test_df, bs):
@@ -157,19 +153,11 @@ def get_dataloaders(train_df, test_df, bs):
     return train_dataloader, test_dataloader
 
 
-def process_sent_type(sent_type, train_df, test_df, embedding_type, embedding_dim):
+def convert_tokens_to_index(sent_type, train_df, test_df, vocab):
+    """Convert to indexes using the vocabulary given. Two caveats
+    1. Convert tokens in test data using the label mapping - if it doesn't exist, we use a special number 1
+    2. Not all sentences will be of same length - we will pad with a special number 0
     """
-    For a given sentence type i.e., premise or hypothesis, we do the following
-    1. Get all the tokens from that type in train data and form a label mapping (2 to size+1)
-    2. Convert tokens in test data using the label mapping - if it doesn't exist, we use a special number 1
-    3. Not all sentences will be of same length - we will pad with a special number 0
-    4. Create embedding layer based on embedding_type param but keep zeros for 0-index and some random vector for 1-index (our special indices)
-    5. The padding_idx will be kept to 0 as that indicates padding
-    """
-    train_df, test_df = train_df.copy(), test_df.copy()
-    # Convert tokens to numbers
-    all_tokens = set(w for l in train_df[f'{sent_type}_tokens'] for w in l)
-    vocab = {w: i + 2 for i, w in enumerate(all_tokens)}
     train_df[sent_type] = train_df[f'{sent_type}_tokens'].apply(lambda l: [vocab[w] for w in l])
     test_df[sent_type] = test_df[f'{sent_type}_tokens'].apply(lambda l: [vocab.get(w, 1) for w in l])  # 1 for unknown token
 
@@ -181,19 +169,40 @@ def process_sent_type(sent_type, train_df, test_df, embedding_type, embedding_di
     train_df[sent_type] = train_df[[sent_type, f'{sent_type}_length']].apply(lambda row: row[sent_type] + [0] * (max_train_length - row[f'{sent_type}_length']), axis=1)
     max_test_length = test_df[f'{sent_type}_length'].max()
     test_df[sent_type] = test_df[[sent_type, f'{sent_type}_length']].apply(lambda row: row[sent_type] + [0] * (max_test_length - row[f'{sent_type}_length']), axis=1)
+    return train_df, test_df
+
+
+def process_sent_type(sent_type, train_df, test_df, embedding_type, embedding_dim):
+    """
+    For a given sentence type i.e., premise or hypothesis, we do the following
+    1. Get all the tokens in train data and form a label mapping (2 to size+1)
+    2. Convert tokens to indexes
+    3. Create embedding layer based on embedding_type param but keep zeros for 0-index and some random vector for 1-index (our special indices)
+    4. The padding_idx will be kept to 0 as that indicates padding
+    """
+    train_df, test_df = train_df.copy(), test_df.copy()
+    # Form mapping of tokens to numbers
+    all_tokens = set(w for l in train_df[f'{sent_type}_tokens'] for w in l)
+    vocab = {w: i + 2 for i, w in enumerate(all_tokens)}
+    train_df, test_df = convert_tokens_to_index(sent_type, train_df, test_df, vocab)
 
     # Create embedding layer
     num_embeddings = len(all_tokens) + 2
 
     if embedding_type == 0 or embedding_type == 1:  # 'pre-trained-untrainable' or 'pre-trained-trainable'
         embeddings_matrix = numpy.zeros((num_embeddings, 300))  # 0-index gets a zero vector
-        word2vec_vectors = gensim.downloader.load('word2vec-google-news-300')
+
+        start_time = time()
+        print(f'Loading word2vec model')
+        word2vec_pretrained = KeyedVectors.load_word2vec_format(word2vec_path, binary=True)
+        print(f'Loaded word2vec model in {time() - start_time} sec')
+        word2vec_pretrained_dict = dict(zip(word2vec_pretrained.key_to_index.keys(), word2vec_pretrained.vectors))
 
         embeddings_matrix[1] = numpy.random.uniform(-0.05, 0.05, size=(300,))  # 1-index gets a random vector
         for i, w in enumerate(all_tokens):
             word_idx = i + 2
-            if w in word2vec_vectors.wv:
-                embeddings_matrix[word_idx] = word2vec_vectors.wv[w]  # tokens present in pre-trained get the respective vector
+            if w in word2vec_pretrained_dict:
+                embeddings_matrix[word_idx] = word2vec_pretrained_dict[w]  # tokens present in pre-trained get the respective vector
             else:
                 embeddings_matrix[word_idx] = numpy.random.uniform(-0.05, 0.05, size=(300,))  # tokens not present get a random vector
 
@@ -211,11 +220,36 @@ def process_sent_type(sent_type, train_df, test_df, embedding_type, embedding_di
     return train_df, test_df, embedding, vocab
 
 
-def train_and_test(data_df, device, seed, num_epochs, bs, model_class,
+def train_and_test(train_df, test_df, device, seed, num_epochs, bs, model_class,
                    embedding_type, embedding_dim,
                    hidden_size, layers,
                    feed_forward_model,
-                   optimiser_class, optimiser_kwargs):
+                   optimiser_class, optimiser_kwargs,
+                   idx):
+    """Run one model given a train and test data"""
+    reset_seeds(seed)  # for fair comparison - all models will start from the same initial point
+    train_df, test_df, premise_embedding, premise_vocab = process_sent_type('premise', train_df, test_df, embedding_type, embedding_dim)
+    train_df, test_df, hypothesis_embedding, hypothesis_vocab = process_sent_type('hypothesis', train_df, test_df, embedding_type, embedding_dim)
+    model = model_class(premise_embedding, hypothesis_embedding,
+                        hidden_size, layers,
+                        feed_forward_model)
+    to_device(model, device)
+
+    reset_seeds(seed + idx)  # for reproducibility
+    train_dataloader, test_dataloader = get_dataloaders(train_df, test_df, bs)
+    train_dataloader, test_dataloader = DeviceDataLoader(train_dataloader, device), DeviceDataLoader(test_dataloader, device)
+
+    train_loss, train_acc, test_loss, test_acc = \
+        train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, optimiser_class, optimiser_kwargs)
+
+    return premise_vocab, hypothesis_vocab, model, train_loss, train_acc, test_loss, test_acc
+
+
+def train_and_validate(data_df, device, seed, num_epochs, bs, model_class,
+                       embedding_type, embedding_dim,
+                       hidden_size, layers,
+                       feed_forward_model,
+                       optimiser_class, optimiser_kwargs):
     """Get loss and accuracy curves for a given set of hyper-parameters using a cross-validation technique"""
     train_loss_curves, test_loss_curves = {}, {}
     train_acc_curves, test_acc_curves = {}, {}
@@ -225,19 +259,58 @@ def train_and_test(data_df, device, seed, num_epochs, bs, model_class,
         print(f"Starting CV fold {idx + 1}")
         train_df, test_df = data_df.iloc[train_index], data_df.iloc[test_index]
 
-        reset_seeds(seed)  # for fair comparison - all models will start from the same initial point
-        train_df, test_df, premise_embedding, premise_vocab = process_sent_type('premise', train_df, test_df, embedding_type, embedding_dim)
-        train_df, test_df, hypothesis_embedding, hypothesis_vocab = process_sent_type('hypothesis', train_df, test_df, embedding_type, embedding_dim)
-        model = model_class(premise_embedding, hypothesis_embedding,
-                            hidden_size, layers,
-                            feed_forward_model)
-        to_device(model, device)
-
-        reset_seeds(seed + idx)  # for reproducibility
-        train_dataloader, test_dataloader = get_dataloaders(train_df, test_df, bs)
-        train_dataloader, test_dataloader = DeviceDataLoader(train_dataloader, device), DeviceDataLoader(test_dataloader, device)
-
-        train_loss_curves[idx], train_acc_curves[idx], test_loss_curves[idx], test_acc_curves[idx] = \
-            train_and_test_model(model, train_dataloader, test_dataloader, num_epochs, optimiser_class, optimiser_kwargs)
+        _, _, _, train_loss_curves[idx], train_acc_curves[idx], test_loss_curves[idx], test_acc_curves[idx] = \
+            train_and_test(train_df, test_df, device, seed, num_epochs, bs, model_class,
+                           embedding_type, embedding_dim,
+                           hidden_size, layers,
+                           feed_forward_model,
+                           optimiser_class, optimiser_kwargs, idx)
 
     return train_loss_curves, train_acc_curves, test_loss_curves, test_acc_curves
+
+
+def train_and_predict(train_df, test_df, device, seed, num_epochs, bs, model_class,
+                      embedding_type, embedding_dim,
+                      hidden_size, layers,
+                      feed_forward_model,
+                      optimiser_class, optimiser_kwargs,
+                      idx):
+    """Get loss and accuracy curves for given train and test data and save the model and the predictions"""
+
+    # Train a model with all train data and get the loss and accuracy metrics
+    train_data = train_df.copy()
+    test_data = clean_up(test_df.copy())  # Deal with the complications of test data
+    premise_vocab, hypothesis_vocab, model, train_loss, train_acc, test_loss, test_acc = \
+        train_and_test(train_data, test_data, device, seed, num_epochs, bs, model_class,
+                       embedding_type, embedding_dim,
+                       hidden_size, layers,
+                       feed_forward_model,
+                       optimiser_class, optimiser_kwargs,
+                       idx)
+
+    # convert tokens to indexes
+    train_df, test_df = convert_tokens_to_index('premise', train_df, test_df, premise_vocab)
+    train_df, test_df = convert_tokens_to_index('hypothesis', train_df, test_df, hypothesis_vocab)
+
+    torch.save(model, save_dir + 'model.pkl', pickle_protocol=pickle.DEFAULT_PROTOCOL)  # save model
+
+    # Make data ready for model
+    bs = len(test_df)
+    test_df.fillna({'label': 4}, inplace=True)  # for label as part of the dataloader - we need some integer
+    test_dataloader = get_dataloader(test_df, bs, shuffle=False)  # keep order intact
+    test_dataloader = DeviceDataLoader(test_dataloader, device)
+    premise, premise_length, hypothesis, hypothesis_length, _ = test_dataloader.__iter__().__next__()
+
+    # Make predictions
+    model.eval()  # set mode to evaluation
+    with torch.no_grad():  # speed up computation for evaluation
+        label_pred = model(premise, premise_length, hypothesis, hypothesis_length)
+    _, label_argmax = torch.max(label_pred.data, 1)
+    label_argmax = label_argmax.detach().cpu().numpy()
+    predicted_labels = list(map(label_inverse_map.get, label_argmax))
+
+    # Save predictions with the actual data
+    output_df = pandas.read_csv(input_path + 'snli_1.0_test.csv', usecols=['sentence1', 'sentence2', 'gold_label'])
+    output_df['prediction'] = predicted_labels
+    output_df.to_csv(save_dir + 'output.csv', index=False)
+    return train_loss, train_acc, test_loss, test_acc
