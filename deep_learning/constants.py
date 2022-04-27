@@ -31,5 +31,5 @@ hyper_parameters_search_grid = {
     'embedding': ['w2v', 'w2v-train', 'train(300)'],  # fixed w2v
     'model': ['lstm', 'gru', 'rnn'],  # fixed to gru
     'stop_words': ['remove', 'dont'],  # fixed to dont
-    'recurrent_dropout_probability': [0, 0.2],  # fixed to 0
+    'recurrent_dropout_probability': [0, 0.2],  # fixed to 0.2
 }
