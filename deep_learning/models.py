@@ -176,7 +176,7 @@ class SNLI_RNN(Module):
 
 
 class SNLI_GRU_Interaction(Module):
-    """Define the interaction model with LSTM as base"""
+    """Define the interaction model with GRU as base"""
 
     def __init__(self,
                  premise_embedding, hypothesis_embedding,
